@@ -1,6 +1,8 @@
 transformers
 torch
+tensorflow
 yfinance
 pandas
+numpy
 scikit-learn
 matplotlib
