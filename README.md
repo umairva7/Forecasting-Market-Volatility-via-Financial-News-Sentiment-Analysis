@@ -119,14 +119,14 @@ Key defaults:
 Script: src/preprocessing.py
 
 1. Load the processed dataset.
-2. Compute the 10-day rolling standard deviation of ^GSPC_Close as target_volatility.
+2. Compute the 10-day rolling standard deviation of ^GSPC_Close as target_volatility. (Note: A 10-day rolling window corresponds to two working weeks in the stock market. This window was chosen because the market impact of the financial news cycle typically decays after two weeks).
 3. Shift target_volatility by one day to create next_day_volatility.
 4. Drop rows with missing targets.
-5. Extract FinBERT embeddings for each day’s headline text.
-6. Scale numeric features with MinMaxScaler.
+5. Tokenize each day's headline text for FinBERT.
+6. Scale numeric features with MinMaxScaler (fitted only on the training set to prevent leakage).
 7. Build fixed-length sequences (default length 10).
 8. Split into train/val/test chronologically.
-9. Save tensors and scaler to data/tensors/ and data/tensors/scaler.pkl.
+9. Save NumPy arrays and scaler to data/tensors/ and data/tensors/scaler.pkl.
 
 ### Phase 3: Train the model
 
@@ -141,8 +141,7 @@ Script: src/train.py
 ## Outputs
 
 - data/processed_market_news.csv: merged market + news dataset
-- data/embeddings/finbert_embeddings.pkl: cached FinBERT embeddings
-- data/tensors/{train,val,test}_data.pt: torch tensors for each split
+- data/tensors/{train,val,test}_data.npz: NumPy arrays for each split
 - data/tensors/scaler.pkl: fitted MinMaxScaler
 - models/multimodal_vol_model.keras: trained Keras model
 
@@ -150,10 +149,9 @@ Script: src/train.py
 
 ### Python and dependencies
 
-The project requires common scientific Python libraries plus both TensorFlow and PyTorch:
+The project requires common scientific Python libraries plus TensorFlow:
 
 - transformers
-- torch
 - tensorflow
 - yfinance
 - pandas
@@ -170,7 +168,6 @@ python -m pip install -r requirement.txt
 Notes:
 
 - The first run of FinBERT will download model weights from Hugging Face.
-- If you have a GPU, both PyTorch and TensorFlow may attempt to use it. If you run into CUDA conflicts, try CPU-only or set CUDA visibility to one framework.
 
 ## Running the pipeline
 
@@ -195,7 +192,7 @@ python src/model.py
 ### Train options
 
 ```
-python src/cli.py train \
+python src/train.py \
 	--tensors-dir data/tensors \
 	--model-path models/multimodal_vol_model.keras \
 	--epochs 50 \
@@ -223,14 +220,13 @@ python src/cli.py train \
 
 Target engineering:
 
-- target_volatility = rolling 10-day standard deviation of ^GSPC_Close.
+- target_volatility = rolling 10-day standard deviation of ^GSPC_Close. (A 10-day window represents two trading weeks, chosen because the relevance of financial news typically decays significantly after this period.)
 - next_day_volatility = target_volatility shifted by -1 day.
 
-Embeddings:
+Tokenization:
 
-- FinBERT model: ProsusAI/finbert (AutoTokenizer + AutoModel).
-- Embedding vector: CLS token (768 dimensions).
-- Embeddings are cached by a hash of the normalized headline text.
+- FinBERT model: ProsusAI/finbert (AutoTokenizer).
+- Tokenization outputs: input_ids and attention_mask (padded to 64 tokens).
 
 Feature scaling:
 
@@ -253,7 +249,7 @@ Splits:
 
 Inputs:
 
-- Text embedding vector: shape (768,)
+- Tokenized text: input_ids and attention_mask vectors (shape max_text_length)
 - Numeric time series window: shape (seq_length, num_features)
 
 Architecture:
@@ -269,8 +265,7 @@ Loss and metrics:
 
 ### Training details (src/train.py)
 
-- Loads tensors from data/tensors.
-- Converts torch tensors to numpy arrays for Keras.
+- Loads NumPy arrays from data/tensors.
 - Uses EarlyStopping and ReduceLROnPlateau callbacks.
 - Prints test MSE after training.
 - Saves model to models/multimodal_vol_model.keras.
@@ -278,13 +273,12 @@ Loss and metrics:
 ## Reproducibility notes
 
 - Random seeds are not set in the current code.
-- FinBERT embeddings are deterministic for identical inputs.
+- FinBERT tokenization is deterministic for identical inputs.
 - TensorFlow training may still be nondeterministic unless you set explicit seeds and deterministic ops.
 
 ## Limitations and missing pieces
 
 - Data acquisition is manual. The pipeline expects data/DFN/raw_partner_headlines.csv to be present.
-- The numeric scaler is fit on the entire dataset before splitting, which can cause leakage into validation and test sets.
 - There is no inference or evaluation report script beyond the printed test MSE.
 - Hyperparameter tuning, feature selection, and benchmarking are not implemented.
 
@@ -293,7 +287,6 @@ Loss and metrics:
 - Missing news file: ensure data/DFN/raw_partner_headlines.csv exists and has date + headline columns.
 - Empty market data: yfinance may return empty data if there is no network or the ticker is unavailable.
 - FinBERT download issues: check your internet connection and Hugging Face access.
-- CUDA or GPU conflicts: both torch and tensorflow may try to use the same GPU.
 - Memory errors: reduce batch size or run on CPU-only.
 
 ## Ethical analysis
