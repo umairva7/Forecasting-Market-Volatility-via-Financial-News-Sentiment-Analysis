@@ -95,10 +95,16 @@ def train_model(
         batch_size=batch_size,
         callbacks=callbacks,
     )
+    # Calculate Naive Baseline (predicting tomorrow's volatility is the same as today's)
+    # Since y_test is next_day_volatility, today's volatility is just y_test shifted by 1.
+    naive_preds = y_test[:-1]
+    actuals = y_test[1:]
+    naive_mse = np.mean((actuals - naive_preds) ** 2)
+    print(f"Naive Baseline MSE: {naive_mse:.6f}")
 
     test_results = model.evaluate([X_text_test, X_num_test], y_test, verbose=0, return_dict=True)
     test_mse = test_results.get("mse", test_results["loss"])
-    print(f"Test MSE: {test_mse:.6f}")
+    print(f"Model Test MSE: {test_mse:.6f}")
 
     if model_output_path:
         output_dir = os.path.dirname(model_output_path)
