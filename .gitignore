@@ -1,2 +1,26 @@
+# Data and Models
 data/
+models/
+output/
+*.pt
+*.keras
+*.h5
+
+# Virtual Environments
 venv/
+env/
+.env
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE and OS
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+
+# Notebooks
+.ipynb_checkpoints/

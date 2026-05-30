@@ -192,43 +192,6 @@ python src/train.py
 python src/model.py
 ```
 
-### Run using the CLI
-
-```
-python src/cli.py phase1
-python src/cli.py phase2
-python src/cli.py train
-
-# Run everything end-to-end
-python src/cli.py all
-```
-
-## CLI reference
-
-### Phase 1 options (data download + merge)
-
-```
-python src/cli.py phase1 \
-	--news-path data/DFN/raw_partner_headlines.csv \
-	--processed-path data/processed_market_news.csv \
-	--period 5y
-```
-
-### Phase 2 options (preprocessing + tensors)
-
-```
-python src/cli.py phase2 \
-	--processed-path data/processed_market_news.csv \
-	--target-col ^GSPC_Close \
-	--seq-length 10 \
-	--embedding-cache data/embeddings/finbert_embeddings.pkl \
-	--tensors-dir data/tensors \
-	--train-ratio 0.7 \
-	--val-ratio 0.15
-```
-
-Use --no-embedding-cache if you want to recompute all FinBERT embeddings.
-
 ### Train options
 
 ```
@@ -247,35 +210,6 @@ python src/cli.py train \
 	--reduce-lr-patience 4 \
 	--min-delta 0.0001
 ```
-
-### All-in-one options
-
-```
-python src/cli.py all \
-	--news-path data/DFN/raw_partner_headlines.csv \
-	--processed-path data/processed_market_news.csv \
-	--period 5y \
-	--target-col ^GSPC_Close \
-	--seq-length 10 \
-	--embedding-cache data/embeddings/finbert_embeddings.pkl \
-	--tensors-dir data/tensors \
-	--train-ratio 0.7 \
-	--val-ratio 0.15 \
-	--model-path models/multimodal_vol_model.keras \
-	--epochs 50 \
-	--batch-size 32 \
-	--learning-rate 0.001 \
-	--dropout-rate 0.2 \
-	--text-units 128 \
-	--lstm-units 96 \
-	--fusion-units 64 \
-	--l2-reg 0.0001 \
-	--early-stop-patience 10 \
-	--reduce-lr-patience 4 \
-	--min-delta 0.0001
-```
-
-## Detailed processing and modeling
 
 ### Data loader details (src/data_loader.py)
 
