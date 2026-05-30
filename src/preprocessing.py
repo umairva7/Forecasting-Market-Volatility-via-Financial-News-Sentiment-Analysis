@@ -136,6 +136,7 @@ def preprocess_features(
     seq_length=10,
     embedding_cache_path: str = "data/embeddings/finbert_embeddings.pkl",
     use_embedding_cache: bool = True,
+    train_ratio: float = 0.7,
 ):
     """
     Calculates target volatility, scales features, and creates sequence tensors.
@@ -165,12 +166,22 @@ def preprocess_features(
         use_cache=use_embedding_cache,
     )
     
-    # 3. Scale numerical features
+    # 3. Scale numerical features (Fix: Fit scaler only on train split)
     feature_cols = [c for c in df.columns if c not in ['headline', 'target_volatility', 'next_day_volatility']]
     
     print(f"Numerical features used: {feature_cols}")
+    
+    # Calculate chronological train end index based on sequences
+    n_samples = len(df) - seq_length + 1
+    train_end_seq = int(n_samples * train_ratio)
+    # The training sequences cover df indices up to train_end_seq + seq_length - 1
+    train_end_df = train_end_seq + seq_length - 1
+    
     scaler = MinMaxScaler()
-    scaled_features = scaler.fit_transform(df[feature_cols])
+    # Fit only on the training portion to prevent data leakage
+    scaler.fit(df.iloc[:train_end_df][feature_cols])
+    # Transform entire dataset
+    scaled_features = scaler.transform(df[feature_cols])
     
     # 4. Create Sequences
     print(f"Creating sequences of length {seq_length}...")
@@ -178,7 +189,7 @@ def preprocess_features(
     X_text = []
     y = []
 
-    for i in range(len(df) - seq_length + 1):
+    for i in range(n_samples):
         X_num.append(scaled_features[i : i + seq_length])
         X_text.append(embeddings[i + seq_length - 1])
         y.append(df['next_day_volatility'].iloc[i + seq_length - 1])
