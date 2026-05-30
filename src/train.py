@@ -48,20 +48,23 @@ def train_model(
 ):
     splits = load_tensor_splits(data_dir)
 
-    X_text_train = _to_numpy(splits["train"]["X_text"]).astype(np.float32)
+    X_text_train = _to_numpy(splits["train"]["X_text"]).astype(np.int32)
+    input_ids_train, attention_mask_train = X_text_train[:, 0, :], X_text_train[:, 1, :]
     X_num_train = _to_numpy(splits["train"]["X_num"]).astype(np.float32)
     y_train = _to_numpy(splits["train"]["y"]).astype(np.float32)
 
-    X_text_val = _to_numpy(splits["val"]["X_text"]).astype(np.float32)
+    X_text_val = _to_numpy(splits["val"]["X_text"]).astype(np.int32)
+    input_ids_val, attention_mask_val = X_text_val[:, 0, :], X_text_val[:, 1, :]
     X_num_val = _to_numpy(splits["val"]["X_num"]).astype(np.float32)
     y_val = _to_numpy(splits["val"]["y"]).astype(np.float32)
 
-    X_text_test = _to_numpy(splits["test"]["X_text"]).astype(np.float32)
+    X_text_test = _to_numpy(splits["test"]["X_text"]).astype(np.int32)
+    input_ids_test, attention_mask_test = X_text_test[:, 0, :], X_text_test[:, 1, :]
     X_num_test = _to_numpy(splits["test"]["X_num"]).astype(np.float32)
     y_test = _to_numpy(splits["test"]["y"]).astype(np.float32)
 
     model = build_multimodal_model(
-        text_embedding_dim=X_text_train.shape[1],
+        max_text_length=X_text_train.shape[2],
         sequence_length=X_num_train.shape[1],
         num_features=X_num_train.shape[2],
         dropout_rate=dropout_rate,
@@ -88,9 +91,9 @@ def train_model(
     ]
 
     history = model.fit(
-        [X_text_train, X_num_train],
+        [input_ids_train, attention_mask_train, X_num_train],
         y_train,
-        validation_data=([X_text_val, X_num_val], y_val),
+        validation_data=([input_ids_val, attention_mask_val, X_num_val], y_val),
         epochs=epochs,
         batch_size=batch_size,
         callbacks=callbacks,
@@ -102,7 +105,7 @@ def train_model(
     naive_mse = np.mean((actuals - naive_preds) ** 2)
     print(f"Naive Baseline MSE: {naive_mse:.6f}")
 
-    test_results = model.evaluate([X_text_test, X_num_test], y_test, verbose=0, return_dict=True)
+    test_results = model.evaluate([input_ids_test, attention_mask_test, X_num_test], y_test, verbose=0, return_dict=True)
     test_mse = test_results.get("mse", test_results["loss"])
     print(f"Model Test MSE: {test_mse:.6f}")
 

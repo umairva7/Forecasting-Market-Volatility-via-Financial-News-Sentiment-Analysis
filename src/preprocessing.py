@@ -25,117 +25,38 @@ def _normalize_headlines(headlines):
     ]
 
 
-def _hash_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _load_embedding_cache(cache_path: str) -> dict:
-    if not cache_path:
-        return {}
-
-    path = Path(cache_path)
-    if not path.exists():
-        return {}
-
-    try:
-        with path.open("rb") as handle:
-            payload = pickle.load(handle)
-    except Exception:
-        return {}
-
-    if isinstance(payload, dict) and "embeddings" in payload:
-        return payload["embeddings"]
-    if isinstance(payload, dict):
-        return payload
-
-    return {}
-
-
-def _save_embedding_cache(cache_path: str, cache_map: dict) -> None:
-    if not cache_path:
-        return
-
-    path = Path(cache_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("wb") as handle:
-        pickle.dump({"embeddings": cache_map}, handle)
-
-
-def extract_finbert_embeddings(
+def tokenize_finbert_headlines(
     headlines,
-    batch_size: int = 32,
-    cache_path: str = "data/embeddings/finbert_embeddings.pkl",
-    use_cache: bool = True,
+    max_length: int = 64,
 ):
     """
-    Extract 768-dimensional sentence embeddings using the pre-trained FinBERT model.
+    Tokenize headlines for FinBERT, returning (N, 2, max_length) array 
+    where index 0 is input_ids and index 1 is attention_mask.
     """
     normalized_headlines = _normalize_headlines(headlines)
-    hashes = [_hash_text(text) for text in normalized_headlines]
-    cache_map = _load_embedding_cache(cache_path) if use_cache else {}
-
-    embeddings = [None] * len(normalized_headlines)
-    missing_indices = []
-
-    for idx, text_hash in enumerate(hashes):
-        if use_cache and text_hash in cache_map:
-            embeddings[idx] = np.asarray(cache_map[text_hash])
-        else:
-            missing_indices.append(idx)
-
-    if missing_indices:
-        print("Loading FinBERT model from HuggingFace...")
-        tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")
-        model = AutoModel.from_pretrained("ProsusAI/finbert")
-
-        # Freeze the model parameters
-        for param in model.parameters():
-            param.requires_grad = False
-
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"Using device: {device}")
-        model.to(device)
-        model.eval()
-
-        missing_texts = [normalized_headlines[i] for i in missing_indices]
-        print(f"Extracting embeddings for {len(missing_texts)} days of news...")
-
-        for batch_start in range(0, len(missing_texts), batch_size):
-            batch_texts = missing_texts[batch_start : batch_start + batch_size]
-            inputs = tokenizer(
-                batch_texts,
-                padding=True,
-                truncation=True,
-                max_length=512,
-                return_tensors="pt",
-            ).to(device)
-
-            with torch.no_grad():
-                outputs = model(**inputs)
-                cls_embeddings = outputs.last_hidden_state[:, 0, :].cpu().numpy()
-
-            for offset, embedding in enumerate(cls_embeddings):
-                idx = missing_indices[batch_start + offset]
-                embeddings[idx] = embedding.astype(np.float32)
-                if use_cache:
-                    cache_map[hashes[idx]] = embeddings[idx]
-
-        if use_cache:
-            _save_embedding_cache(cache_path, cache_map)
-    else:
-        print("Using cached FinBERT embeddings.")
-
-    if embeddings:
-        return np.vstack(embeddings)
-
-    return np.empty((0, 768))
+    
+    print(f"Tokenizing {len(normalized_headlines)} days of news...")
+    tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")
+    
+    inputs = tokenizer(
+        normalized_headlines,
+        padding="max_length",
+        truncation=True,
+        max_length=max_length,
+        return_tensors="np"
+    )
+    
+    input_ids = inputs["input_ids"]
+    attention_mask = inputs["attention_mask"]
+    
+    # Stack along axis 1 -> (N, 2, max_length)
+    tokens_stacked = np.stack([input_ids, attention_mask], axis=1)
+    return tokens_stacked
 
 def preprocess_features(
     df,
     target_col='^GSPC_Close',
     seq_length=10,
-    embedding_cache_path: str = "data/embeddings/finbert_embeddings.pkl",
-    use_embedding_cache: bool = True,
     train_ratio: float = 0.7,
 ):
     """
@@ -159,11 +80,10 @@ def preprocess_features(
     # Drop rows that have NaN values (initial rolling window period and the last row)
     df = df.dropna(subset=['target_volatility', 'next_day_volatility']).copy()
     
-    # 2. Extract news embeddings (We do this after dropna to save compute on unused rows)
-    embeddings = extract_finbert_embeddings(
-        df['headline'],
-        cache_path=embedding_cache_path,
-        use_cache=use_embedding_cache,
+    # 2. Extract news tokens
+    tokens = tokenize_finbert_headlines(
+        df['headline'].tolist(),
+        max_length=64,
     )
     
     # 3. Scale numerical features (Fix: Fit scaler only on train split)
@@ -191,7 +111,7 @@ def preprocess_features(
 
     for i in range(n_samples):
         X_num.append(scaled_features[i : i + seq_length])
-        X_text.append(embeddings[i + seq_length - 1])
+        X_text.append(tokens[i + seq_length - 1])
         y.append(df['next_day_volatility'].iloc[i + seq_length - 1])
 
     X_num = np.array(X_num)
