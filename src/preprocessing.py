@@ -5,7 +5,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import torch
 from transformers import AutoTokenizer, AutoModel
 from sklearn.preprocessing import MinMaxScaler
 
@@ -130,19 +129,19 @@ def create_data_splits(X_num, X_text, y, train_ratio=0.7, val_ratio=0.15):
     
     splits = {
         'train': {
-            'X_num': torch.tensor(X_num[:train_end], dtype=torch.float32),
-            'X_text': torch.tensor(X_text[:train_end], dtype=torch.float32),
-            'y': torch.tensor(y[:train_end], dtype=torch.float32)
+            'X_num': X_num[:train_end].astype(np.float32),
+            'X_text': X_text[:train_end].astype(np.int32),
+            'y': y[:train_end].astype(np.float32)
         },
         'val': {
-            'X_num': torch.tensor(X_num[train_end:val_end], dtype=torch.float32),
-            'X_text': torch.tensor(X_text[train_end:val_end], dtype=torch.float32),
-            'y': torch.tensor(y[train_end:val_end], dtype=torch.float32)
+            'X_num': X_num[train_end:val_end].astype(np.float32),
+            'X_text': X_text[train_end:val_end].astype(np.int32),
+            'y': y[train_end:val_end].astype(np.float32)
         },
         'test': {
-            'X_num': torch.tensor(X_num[val_end:], dtype=torch.float32),
-            'X_text': torch.tensor(X_text[val_end:], dtype=torch.float32),
-            'y': torch.tensor(y[val_end:], dtype=torch.float32)
+            'X_num': X_num[val_end:].astype(np.float32),
+            'X_text': X_text[val_end:].astype(np.int32),
+            'y': y[val_end:].astype(np.float32)
         }
     }
     
@@ -158,12 +157,12 @@ def create_data_splits(X_num, X_text, y, train_ratio=0.7, val_ratio=0.15):
 
 def save_splits(splits, scaler, output_dir='data/tensors'):
     """
-    Save torch tensors and the scaler for downstream training.
+    Save numpy arrays and the scaler for downstream training.
     """
     os.makedirs(output_dir, exist_ok=True)
 
     for split_name, data in splits.items():
-        torch.save(data, os.path.join(output_dir, f"{split_name}_data.pt"))
+        np.savez(os.path.join(output_dir, f"{split_name}_data.npz"), **data)
 
     with open(os.path.join(output_dir, 'scaler.pkl'), 'wb') as handle:
         pickle.dump(scaler, handle)

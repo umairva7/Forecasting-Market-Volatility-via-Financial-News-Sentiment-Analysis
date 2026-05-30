@@ -7,7 +7,6 @@ import os
 import sys
 
 import numpy as np
-import torch
 import tensorflow as tf
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
@@ -17,17 +16,13 @@ if PROJECT_ROOT not in sys.path:
 from src.model import build_multimodal_model
 
 
-def _to_numpy(tensor: torch.Tensor) -> np.ndarray:
-    return tensor.detach().cpu().numpy()
-
-
 def load_tensor_splits(data_dir: str = "data/tensors") -> dict:
     splits = {}
     for split in ("train", "val", "test"):
-        path = os.path.join(data_dir, f"{split}_data.pt")
+        path = os.path.join(data_dir, f"{split}_data.npz")
         if not os.path.exists(path):
             raise FileNotFoundError(f"Missing tensor file: {path}")
-        splits[split] = torch.load(path, map_location="cpu")
+        splits[split] = np.load(path)
     return splits
 
 
@@ -48,20 +43,20 @@ def train_model(
 ):
     splits = load_tensor_splits(data_dir)
 
-    X_text_train = _to_numpy(splits["train"]["X_text"]).astype(np.int32)
+    X_text_train = splits["train"]["X_text"]
     input_ids_train, attention_mask_train = X_text_train[:, 0, :], X_text_train[:, 1, :]
-    X_num_train = _to_numpy(splits["train"]["X_num"]).astype(np.float32)
-    y_train = _to_numpy(splits["train"]["y"]).astype(np.float32)
+    X_num_train = splits["train"]["X_num"]
+    y_train = splits["train"]["y"]
 
-    X_text_val = _to_numpy(splits["val"]["X_text"]).astype(np.int32)
+    X_text_val = splits["val"]["X_text"]
     input_ids_val, attention_mask_val = X_text_val[:, 0, :], X_text_val[:, 1, :]
-    X_num_val = _to_numpy(splits["val"]["X_num"]).astype(np.float32)
-    y_val = _to_numpy(splits["val"]["y"]).astype(np.float32)
+    X_num_val = splits["val"]["X_num"]
+    y_val = splits["val"]["y"]
 
-    X_text_test = _to_numpy(splits["test"]["X_text"]).astype(np.int32)
+    X_text_test = splits["test"]["X_text"]
     input_ids_test, attention_mask_test = X_text_test[:, 0, :], X_text_test[:, 1, :]
-    X_num_test = _to_numpy(splits["test"]["X_num"]).astype(np.float32)
-    y_test = _to_numpy(splits["test"]["y"]).astype(np.float32)
+    X_num_test = splits["test"]["X_num"]
+    y_test = splits["test"]["y"]
 
     model = build_multimodal_model(
         max_text_length=X_text_train.shape[2],
@@ -121,7 +116,7 @@ def train_model(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train the multimodal volatility model.")
-    parser.add_argument("--data-dir", default="data/tensors", help="Directory with train/val/test .pt files")
+    parser.add_argument("--data-dir", default="data/tensors", help="Directory with train/val/test .npz files")
     parser.add_argument(
         "--model-path",
         default="models/multimodal_vol_model.keras",
