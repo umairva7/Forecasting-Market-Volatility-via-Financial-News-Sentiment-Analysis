@@ -56,7 +56,6 @@ The project also includes an ethical analysis document that discusses risks of a
 ├── output/
 └── src/
 		├── __init__.py
-		├── cli.py
 		├── data_loader.py
 		├── model.py
 		├── preprocessing.py
