@@ -1,13 +1,16 @@
-"""Train the multimodal Keras model on preprocessed tensors."""
-
 from __future__ import annotations
 
 import argparse
 import os
+
+os.environ["TF_USE_LEGACY_KERAS"] = "1"
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = "3"
+
+from transformers import TFAutoModel
+import tensorflow as tf
+import numpy as np
 import sys
 
-import numpy as np
-import tensorflow as tf
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
 if PROJECT_ROOT not in sys.path:
@@ -16,9 +19,9 @@ if PROJECT_ROOT not in sys.path:
 from src.model import build_multimodal_model
 
 
-def load_tensor_splits(data_dir: str = "data/tensors") -> dict:
+def load_tensor_splits(data_dir="data/tensors"):
     splits = {}
-    for split in ("train", "val", "test"):
+    for split in ("train", "val", 'test'):
         path = os.path.join(data_dir, f"{split}_data.npz")
         if not os.path.exists(path):
             raise FileNotFoundError(f"Missing tensor file: {path}")
@@ -27,41 +30,41 @@ def load_tensor_splits(data_dir: str = "data/tensors") -> dict:
 
 
 def train_model(
-    data_dir: str = "data/tensors",
-    model_output_path: str = "models/multimodal_vol_model.keras",
-    epochs: int = 50,
-    batch_size: int = 32,
-    learning_rate: float = 1e-3,
-    dropout_rate: float = 0.2,
-    text_units: int = 128,
-    lstm_units: int = 96,
-    fusion_units: int = 64,
-    l2_reg: float = 1e-4,
-    early_stop_patience: int = 10,
-    reduce_lr_patience: int = 4,
-    min_delta: float = 1e-4,
+    data_dir="data/tensors",
+    model_output_path="models/multimodal_vol_model.keras",
+    epochs=50,
+    batch_size=32,
+    learning_rate=1e-3,
+    dropout_rate=0.2,
+    text_units=128,
+    lstm_units=96,
+    fusion_units=64,
+    l2_reg=1e-4,
+    early_stop_patience=10,
+    reduce_lr_patience=4,
+    min_delta=1e-4,
 ):
     splits = load_tensor_splits(data_dir)
 
-    X_text_train = splits["train"]["X_text"]
-    input_ids_train, attention_mask_train = X_text_train[:, 0, :], X_text_train[:, 1, :]
-    X_num_train = splits["train"]["X_num"]
-    y_train = splits["train"]["y"]
+    x_text_tr = splits["train"]["X_text"]
+    in_ids_tr, mask_tr = x_text_tr[:, 0, :], x_text_tr[:, 1, :]
+    x_num_tr = splits["train"]["X_num"]
+    y_tr = splits["train"]["y"]
 
-    X_text_val = splits["val"]["X_text"]
-    input_ids_val, attention_mask_val = X_text_val[:, 0, :], X_text_val[:, 1, :]
-    X_num_val = splits["val"]["X_num"]
+    x_text_val = splits["val"]["X_text"]
+    in_ids_val, mask_val = x_text_val[:, 0, :], x_text_val[:, 1, :]
+    x_num_val = splits["val"]["X_num"]
     y_val = splits["val"]["y"]
 
-    X_text_test = splits["test"]["X_text"]
-    input_ids_test, attention_mask_test = X_text_test[:, 0, :], X_text_test[:, 1, :]
-    X_num_test = splits["test"]["X_num"]
-    y_test = splits["test"]["y"]
+    x_text_ts = splits["test"]["X_text"]
+    in_ids_ts, mask_ts = x_text_ts[:, 0, :], x_text_ts[:, 1, :]
+    x_num_ts = splits["test"]["X_num"]
+    y_ts = splits["test"]["y"]
 
     model = build_multimodal_model(
-        max_text_length=X_text_train.shape[2],
-        sequence_length=X_num_train.shape[1],
-        num_features=X_num_train.shape[2],
+        max_text_length=x_text_tr.shape[2],
+        sequence_length=x_num_tr.shape[1],
+        num_features=x_num_tr.shape[2],
         dropout_rate=dropout_rate,
         text_units=text_units,
         lstm_units=lstm_units,
@@ -70,7 +73,7 @@ def train_model(
         learning_rate=learning_rate,
     )
 
-    callbacks = [
+    cbs = [
         tf.keras.callbacks.EarlyStopping(
             monitor="val_loss",
             patience=early_stop_patience,
@@ -78,47 +81,49 @@ def train_model(
             restore_best_weights=True,
         ),
         tf.keras.callbacks.ReduceLROnPlateau(
-            monitor="val_loss",
+            monitor='val_loss',
             patience=reduce_lr_patience,
             factor=0.5,
             min_lr=1e-6,
         ),
     ]
 
-    history = model.fit(
-        [input_ids_train, attention_mask_train, X_num_train],
-        y_train,
-        validation_data=([input_ids_val, attention_mask_val, X_num_val], y_val),
+
+    hist = model.fit(
+        [in_ids_tr, mask_tr, x_num_tr],
+        y_tr,
+        validation_data=([in_ids_val, mask_val, x_num_val], y_val),
         epochs=epochs,
         batch_size=batch_size,
-        callbacks=callbacks,
+        callbacks=cbs,
     )
-    # Calculate Naive Baseline (predicting tomorrow's volatility is the same as today's)
-    # Since y_test is next_day_volatility, today's volatility is just y_test shifted by 1.
-    naive_preds = y_test[:-1]
-    actuals = y_test[1:]
-    naive_mse = np.mean((actuals - naive_preds) ** 2)
-    print(f"Naive Baseline MSE: {naive_mse:.6f}")
+    
+    # baseline calc
+    naive_preds = y_ts[:-1]
+    actuals = y_ts[1:]
+    naive_rmse = np.sqrt(np.mean((actuals - naive_preds) ** 2))
+    print(f"Real-World Naive RMSE: {naive_rmse * 100:.4f}% daily volatility margin")
 
-    test_results = model.evaluate([input_ids_test, attention_mask_test, X_num_test], y_test, verbose=0, return_dict=True)
-    test_mse = test_results.get("mse", test_results["loss"])
-    print(f"Model Test MSE: {test_mse:.6f}")
+    test_res = model.evaluate([in_ids_ts, mask_ts, x_num_ts], y_ts, verbose=0, return_dict=True)
+    test_mse = test_res.get("mse", test_res["loss"])
+    test_rmse = np.sqrt(test_mse)
+    print(f"Real-World Model RMSE: {test_rmse * 100:.4f}% daily volatility margin")
 
     if model_output_path:
-        output_dir = os.path.dirname(model_output_path)
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
+        out_dir = os.path.dirname(model_output_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
         model.save(model_output_path)
         print(f"Saved model to {model_output_path}")
 
-    return model, history, test_mse
+    return model, hist, test_mse
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser(description="Train the multimodal volatility model.")
-    parser.add_argument("--data-dir", default="data/tensors", help="Directory with train/val/test .npz files")
+    parser.add_argument("--data-dir", default='data/tensors', help="Directory with train/val/test .npz files")
     parser.add_argument(
-        "--model-path",
+        '--model-path',
         default="models/multimodal_vol_model.keras",
         help="Output path for the saved Keras model",
     )
@@ -135,6 +140,7 @@ def main() -> None:
     parser.add_argument("--min-delta", type=float, default=1e-4)
 
     args = parser.parse_args()
+    
     train_model(
         data_dir=args.data_dir,
         model_output_path=args.model_path,
@@ -152,5 +158,5 @@ def main() -> None:
     )
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

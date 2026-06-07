@@ -9,9 +9,7 @@ from transformers import AutoTokenizer, AutoModel
 from sklearn.preprocessing import MinMaxScaler
 
 def load_data(file_path='data/processed_market_news.csv'):
-    """
-    Loads the processed market and news data.
-    """
+    # load data
     print(f"Loading data from {file_path}...")
     df = pd.read_csv(file_path, index_col=0, parse_dates=True)
     df = df.sort_index()
@@ -19,49 +17,42 @@ def load_data(file_path='data/processed_market_news.csv'):
 
 def _normalize_headlines(headlines):
     return [
-        str(text) if pd.notna(text) and str(text).strip() != "" else "No news today."
-        for text in headlines
+        str(t) if pd.notna(t) and str(t).strip() != "" else "No news today."
+        for t in headlines
     ]
 
 
 def tokenize_finbert_headlines(
     headlines,
-    max_length: int = 64,
+    max_length=64,
 ):
-    """
-    Tokenize headlines for FinBERT, returning (N, 2, max_length) array 
-    where index 0 is input_ids and index 1 is attention_mask.
-    """
-    normalized_headlines = _normalize_headlines(headlines)
+    # tokenize for finbert
+    norm_heads = _normalize_headlines(headlines)
     
-    print(f"Tokenizing {len(normalized_headlines)} days of news...")
-    tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")
+    print(f"Tokenizing {len(norm_heads)} days of news...")
+    tokenizer = AutoTokenizer.from_pretrained('ProsusAI/finbert')
     
     inputs = tokenizer(
-        normalized_headlines,
+        norm_heads,
         padding="max_length",
         truncation=True,
         max_length=max_length,
         return_tensors="np"
     )
     
-    input_ids = inputs["input_ids"]
-    attention_mask = inputs["attention_mask"]
+    in_ids = inputs["input_ids"]
+    mask = inputs['attention_mask']
     
-    # Stack along axis 1 -> (N, 2, max_length)
-    tokens_stacked = np.stack([input_ids, attention_mask], axis=1)
-    return tokens_stacked
+    # stack them up
+    toks_stacked = np.stack([in_ids, mask], axis=1)
+    return toks_stacked
 
-def preprocess_features(
+def prep_feats(
     df,
     target_col='^GSPC_Close',
     seq_length=10,
-    train_ratio: float = 0.7,
+    train_ratio=0.7,
 ):
-    """
-    Calculates target volatility, scales features, and creates sequence tensors.
-    Each sample includes a numeric window and the corresponding day's news embedding.
-    """
     print("Preprocessing numerical features...")
     if target_col not in df.columns:
         raise KeyError(f"Missing target column: {target_col}")
@@ -70,77 +61,74 @@ def preprocess_features(
 
     df = df.copy()
 
-    # 1. Calculate the 10-day rolling standard deviation of the close prices as the target volatility
-    df['target_volatility'] = df[target_col].rolling(window=10).std()
+    # calc 10 day rolling std dev of returns
+    df['returns'] = df[target_col].pct_change()
+    df['targ_vol'] = df['returns'].rolling(window=10).std()
     
-    # Shift target to be next-day's volatility (t+1)
-    df['next_day_volatility'] = df['target_volatility'].shift(-1)
+    # shift to next day
+    df['next_day_vol'] = df['targ_vol'].shift(-1)
     
-    # Drop rows that have NaN values (initial rolling window period and the last row)
-    df = df.dropna(subset=['target_volatility', 'next_day_volatility']).copy()
+    # drop nans
+    df = df.dropna(subset=['targ_vol', 'next_day_vol']).copy()
     
-    # 2. Extract news tokens
-    tokens = tokenize_finbert_headlines(
+    # get news tokens
+    toks = tokenize_finbert_headlines(
         df['headline'].tolist(),
         max_length=64,
     )
     
-    # 3. Scale numerical features (Fix: Fit scaler only on train split)
-    feature_cols = [c for c in df.columns if c not in ['headline', 'target_volatility', 'next_day_volatility']]
+    # fit scaler only on train
+    feat_cols = [c for c in df.columns if c not in ['headline', 'targ_vol', 'next_day_vol']]
     
-    print(f"Numerical features used: {feature_cols}")
+    print(f"Numerical features used: {feat_cols}")
     
-    # Calculate chronological train end index based on sequences
-    n_samples = len(df) - seq_length + 1
-    train_end_seq = int(n_samples * train_ratio)
-    # The training sequences cover df indices up to train_end_seq + seq_length - 1
-    train_end_df = train_end_seq + seq_length - 1
+    # find split idx
+    n_samps = len(df) - seq_length + 1
+    tr_end_seq = int(n_samps * train_ratio)
+    tr_end_df = tr_end_seq + seq_length - 1
     
     scaler = MinMaxScaler()
-    # Fit only on the training portion to prevent data leakage
-    scaler.fit(df.iloc[:train_end_df][feature_cols])
-    # Transform entire dataset
-    scaled_features = scaler.transform(df[feature_cols])
+    scaler.fit(df.iloc[:tr_end_df][feat_cols])
     
-    # 4. Create Sequences
+    scaled_feats = scaler.transform(df[feat_cols])
+    
+    # make seqs
     print(f"Creating sequences of length {seq_length}...")
-    X_num = []
-    X_text = []
+    x_num = []
+    x_text = []
     y = []
 
-    for i in range(n_samples):
-        X_num.append(scaled_features[i : i + seq_length])
-        X_text.append(tokens[i + seq_length - 1])
-        y.append(df['next_day_volatility'].iloc[i + seq_length - 1])
+    for i in range(n_samps):
+        x_num.append(scaled_feats[i : i + seq_length])
+        x_text.append(toks[i + seq_length - 1])
+        y.append(df['next_day_vol'].iloc[i + seq_length - 1])
 
-    X_num = np.array(X_num)
-    X_text = np.array(X_text)
+    x_num = np.array(x_num)
+    x_text = np.array(x_text)
     y = np.array(y)
     
-    return X_num, X_text, y, scaler
+    return x_num, x_text, y, scaler
 
-def create_data_splits(X_num, X_text, y, train_ratio=0.7, val_ratio=0.15):
-    """
-    Splits the data into training, validation, and testing sets temporally.
-    """
-    n_samples = len(y)
-    train_end = int(n_samples * train_ratio)
-    val_end = int(n_samples * (train_ratio + val_ratio))
+def create_data_splits(x_num, x_text, y, train_ratio=0.7, val_ratio=0.15):
+    # split temporally
+    n_samps = len(y)
+    tr_end = int(n_samps * train_ratio)
+    val_end = int(n_samps * (train_ratio + val_ratio))
     
     splits = {
         'train': {
-            'X_num': X_num[:train_end].astype(np.float32),
-            'X_text': X_text[:train_end].astype(np.int32),
-            'y': y[:train_end].astype(np.float32)
+            'X_num': x_num[:tr_end].astype(np.float32),
+            'X_text': x_text[:tr_end].astype(np.int32),
+            'y': y[:tr_end].astype(np.float32)
         },
         'val': {
-            'X_num': X_num[train_end:val_end].astype(np.float32),
-            'X_text': X_text[train_end:val_end].astype(np.int32),
-            'y': y[train_end:val_end].astype(np.float32)
+            'X_num': x_num[tr_end:val_end].astype(np.float32),
+            'X_text': x_text[tr_end:val_end].astype(np.int32),
+            'y': y[tr_end:val_end].astype(np.float32)
         },
         'test': {
-            'X_num': X_num[val_end:].astype(np.float32),
-            'X_text': X_text[val_end:].astype(np.int32),
+            'X_num': x_num[val_end:].astype(np.float32),
+            'X_text': x_text[val_end:].astype(np.int32),
             'y': y[val_end:].astype(np.float32)
         }
     }
@@ -156,23 +144,21 @@ def create_data_splits(X_num, X_text, y, train_ratio=0.7, val_ratio=0.15):
 
 
 def save_splits(splits, scaler, output_dir='data/tensors'):
-    """
-    Save numpy arrays and the scaler for downstream training.
-    """
+    # save arrays and scaler
     os.makedirs(output_dir, exist_ok=True)
 
     for split_name, data in splits.items():
         np.savez(os.path.join(output_dir, f"{split_name}_data.npz"), **data)
 
-    with open(os.path.join(output_dir, 'scaler.pkl'), 'wb') as handle:
-        pickle.dump(scaler, handle)
+    with open(os.path.join(output_dir, 'scaler.pkl'), 'wb') as f:
+        pickle.dump(scaler, f)
 
 if __name__ == "__main__":
     df = load_data()
     
-    X_num, X_text, y, scaler = preprocess_features(df, target_col='^GSPC_Close', seq_length=10)
+    x_num, x_text, y, scaler = prep_feats(df, target_col='^GSPC_Close', seq_length=10)
     
-    splits = create_data_splits(X_num, X_text, y)
+    splits = create_data_splits(x_num, x_text, y)
     
     save_splits(splits, scaler)
     print("Preprocessing complete. Tensors and scaler saved to data/tensors/")

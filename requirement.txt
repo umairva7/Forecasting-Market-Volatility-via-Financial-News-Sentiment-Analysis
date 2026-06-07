@@ -1,5 +1,6 @@
-transformers
+transformers<5.0.0
 tensorflow
+tf-keras
 yfinance
 pandas
 numpy
